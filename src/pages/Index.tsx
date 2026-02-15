@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { toast } from "sonner";
-import Header from "@/components/Header";
-import HeroSection from "@/components/HeroSection";
+import { ArrowRight, Sparkles, TrendingUp, Zap, Tag } from "lucide-react";
+import MarketplaceHeader from "@/components/MarketplaceHeader";
 import FeaturesBar from "@/components/FeaturesBar";
-import ProductCard from "@/components/ProductCard";
+import ProductGridCard from "@/components/ProductGridCard";
 import Footer from "@/components/Footer";
-import { MOCK_PRODUCTS, type Product } from "@/lib/medusa-client";
+import { MOCK_PRODUCTS, MOCK_CATEGORIES, MOCK_COLLECTIONS } from "@/lib/medusa-client";
+import heroImage from "@/assets/hero-vitamins.jpg";
 
 import prodVitaminaC from "@/assets/prod-vitamina-c.jpg";
 import prodMagnesio from "@/assets/prod-magnesio.jpg";
@@ -15,7 +15,6 @@ import prodZinc from "@/assets/prod-zinc.jpg";
 import prodVitaminaD from "@/assets/prod-vitamina-d.jpg";
 import prodHierro from "@/assets/prod-hierro.jpg";
 
-// Map mock product thumbnails to generated images
 const PRODUCT_IMAGES: Record<string, string> = {
   prod_1: prodVitaminaC,
   prod_2: prodMagnesio,
@@ -25,72 +24,169 @@ const PRODUCT_IMAGES: Record<string, string> = {
   prod_6: prodHierro,
 };
 
-const products = MOCK_PRODUCTS.map((p) => ({
+const featuredProducts = MOCK_PRODUCTS.slice(0, 8).map((p) => ({
   ...p,
   thumbnail: PRODUCT_IMAGES[p.id] || p.thumbnail,
 }));
 
+const CATEGORY_ICONS = ["💊", "🪨", "🐟", "🦠", "💪", "🌿", "🏋️", "✨"];
+
 const Index = () => {
-  const [cartItems, setCartItems] = useState<{ product: Product; qty: number }[]>([]);
-  const cartCount = cartItems.reduce((sum, i) => sum + i.qty, 0);
-
-  const handleAddToCart = (product: Product) => {
-    setCartItems((prev) => {
-      const existing = prev.find((i) => i.product.id === product.id);
-      if (existing) {
-        return prev.map((i) =>
-          i.product.id === product.id ? { ...i, qty: i.qty + 1 } : i
-        );
-      }
-      return [...prev, { product, qty: 1 }];
-    });
-    toast.success(`${product.title} añadido al carrito`);
-  };
-
   return (
     <div className="min-h-screen bg-background">
-      <Header cartCount={cartCount} />
-      <HeroSection />
+      <MarketplaceHeader />
+
+      {/* Hero */}
+      <section className="relative overflow-hidden">
+        <div className="absolute inset-0">
+          <img src={heroImage} alt="Vitaminas" className="h-full w-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-r from-foreground/85 via-foreground/60 to-transparent" />
+        </div>
+        <div className="container relative mx-auto px-4 py-16 md:py-24">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="max-w-lg space-y-4"
+          >
+            <span className="inline-block rounded-full bg-primary/20 px-3 py-1 text-xs font-medium text-primary-foreground backdrop-blur-sm">
+              🌿 Más de 50.000 productos
+            </span>
+            <h1 className="font-display text-3xl font-bold leading-tight text-primary-foreground md:text-5xl">
+              Tu marketplace de salud y bienestar
+            </h1>
+            <p className="text-primary-foreground/80 leading-relaxed">
+              Vitaminas, minerales y suplementos de las mejores marcas del mundo. Envío rápido a toda España.
+            </p>
+            <div className="flex gap-3 pt-1">
+              <Link
+                to="/productos"
+                className="hero-gradient inline-flex items-center gap-2 rounded-lg px-6 py-2.5 text-sm font-semibold text-primary-foreground shadow-lg hover:opacity-90 transition"
+              >
+                Explorar Catálogo <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
       <FeaturesBar />
 
-      {/* Products section */}
-      <section id="productos" className="container mx-auto px-4 py-16">
-        <div className="mb-10 text-center">
-          <h2 className="font-display text-3xl font-bold text-foreground md:text-4xl">
-            Nuestros Productos
-          </h2>
-          <p className="mt-3 text-muted-foreground">
-            Selección premium de suplementos para tu bienestar
-          </p>
+      {/* Category grid */}
+      <section className="container mx-auto px-4 py-12">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="font-display text-2xl font-bold text-foreground">Categorías</h2>
+          <Link to="/productos" className="text-sm text-primary hover:underline">Ver todas →</Link>
         </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+          {MOCK_CATEGORIES.map((cat, i) => (
+            <Link
+              key={cat.id}
+              to={`/productos?categoria=${cat.handle}`}
+              className="group flex flex-col items-center gap-2 rounded-xl border border-border bg-card p-4 text-center transition-all hover:border-primary/30 hover:card-shadow-hover"
+            >
+              <span className="text-2xl">{CATEGORY_ICONS[i]}</span>
+              <span className="text-xs font-medium text-foreground group-hover:text-primary transition-colors">
+                {cat.name}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {cat.category_children?.length || 0} sub
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
 
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {products.map((product, i) => (
+      {/* Promo banners */}
+      <section className="container mx-auto px-4 pb-8">
+        <div className="grid gap-4 md:grid-cols-3">
+          <div className="flex items-center gap-4 rounded-xl hero-gradient p-5">
+            <Sparkles className="h-8 w-8 text-primary-foreground shrink-0" />
+            <div>
+              <h3 className="font-display text-lg font-bold text-primary-foreground">Novedades</h3>
+              <p className="text-xs text-primary-foreground/80">Últimos lanzamientos cada semana</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 rounded-xl warm-gradient p-5">
+            <Tag className="h-8 w-8 text-primary-foreground shrink-0" />
+            <div>
+              <h3 className="font-display text-lg font-bold text-primary-foreground">Ofertas Flash</h3>
+              <p className="text-xs text-primary-foreground/80">Hasta 40% de descuento</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 rounded-xl bg-card border border-border p-5">
+            <TrendingUp className="h-8 w-8 text-primary shrink-0" />
+            <div>
+              <h3 className="font-display text-lg font-bold text-foreground">Más Vendidos</h3>
+              <p className="text-xs text-muted-foreground">Los favoritos de nuestros clientes</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Featured products */}
+      <section className="container mx-auto px-4 pb-12">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="font-display text-2xl font-bold text-foreground">Productos Destacados</h2>
+          <Link to="/productos" className="text-sm text-primary hover:underline">Ver más →</Link>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+          {featuredProducts.map((product, i) => (
             <motion.div
               key={product.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 10 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              transition={{ delay: i * 0.1, duration: 0.5 }}
+              transition={{ delay: i * 0.05, duration: 0.3 }}
             >
-              <ProductCard product={product} onAddToCart={handleAddToCart} />
+              <ProductGridCard product={product} />
             </motion.div>
           ))}
         </div>
       </section>
 
-      {/* CTA banner */}
-      <section className="hero-gradient">
-        <div className="container mx-auto px-4 py-16 text-center">
-          <h2 className="font-display text-3xl font-bold text-primary-foreground md:text-4xl">
-            ¿Necesitas asesoría personalizada?
+      {/* Collections row */}
+      <section className="bg-card border-y border-border">
+        <div className="container mx-auto px-4 py-12">
+          <h2 className="font-display text-2xl font-bold text-foreground mb-6">Compra por Colección</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {MOCK_COLLECTIONS.slice(0, 4).map((col) => (
+              <Link
+                key={col.id}
+                to={`/productos?coleccion=${col.id}`}
+                className="group relative overflow-hidden rounded-xl hero-gradient p-6 transition-all hover:shadow-xl"
+              >
+                <h3 className="font-display text-xl font-bold text-primary-foreground">{col.title}</h3>
+                <p className="mt-1 text-xs text-primary-foreground/70">Ver productos →</p>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Newsletter */}
+      <section className="container mx-auto px-4 py-12">
+        <div className="rounded-xl border border-border bg-card p-8 text-center max-w-2xl mx-auto">
+          <Zap className="h-8 w-8 text-accent mx-auto mb-3" />
+          <h2 className="font-display text-2xl font-bold text-foreground">
+            Recibe ofertas exclusivas
           </h2>
-          <p className="mt-3 text-primary-foreground/80 max-w-lg mx-auto">
-            Nuestro equipo de expertos en nutrición puede ayudarte a encontrar los suplementos ideales para tus necesidades.
+          <p className="mt-2 text-sm text-muted-foreground">
+            Suscríbete y obtén un 10% en tu primer pedido
           </p>
-          <button className="mt-6 rounded-lg warm-gradient px-8 py-3 font-semibold text-primary-foreground shadow-lg transition-opacity hover:opacity-90">
-            Contactar Experto
-          </button>
+          <form className="mt-4 flex max-w-md mx-auto gap-2">
+            <input
+              type="email"
+              placeholder="tu@email.com"
+              className="flex-1 rounded-lg border border-border bg-background px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+            />
+            <button
+              type="button"
+              className="rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Suscribirse
+            </button>
+          </form>
         </div>
       </section>
 
