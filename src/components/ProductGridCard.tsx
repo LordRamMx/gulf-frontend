@@ -1,4 +1,4 @@
-import { Product } from "@/lib/medusa-client";
+import { Product, getVariantPrice, formatPrice } from "@/lib/medusa-client";
 import { useCart } from "@/contexts/CartContext";
 import { ShoppingCart, Star } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -9,12 +9,9 @@ interface ProductGridCardProps {
 
 const ProductGridCard = ({ product }: ProductGridCardProps) => {
   const { addItem } = useCart();
-  const price = product.variants?.[0]?.prices?.[0];
-  const formattedPrice = price
-    ? new Intl.NumberFormat("es-ES", {
-        style: "currency",
-        currency: price.currency_code?.toUpperCase() || "EUR",
-      }).format(price.amount / 100)
+  const priceData = getVariantPrice(product.variants?.[0]);
+  const formattedPrice = priceData
+    ? formatPrice(priceData.amount, priceData.currency_code)
     : "—";
 
   // Fake rating for demo

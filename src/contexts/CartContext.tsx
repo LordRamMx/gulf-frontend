@@ -30,8 +30,13 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   const count = items.reduce((s, i) => s + i.qty, 0);
   const total = items.reduce((s, i) => {
-    const price = i.product.variants?.[0]?.prices?.[0]?.amount || 0;
-    return s + price * i.qty;
+    const v = i.product.variants?.[0];
+    // Medusa v2: prefer calculated_price, fall back to prices[]
+    const amount =
+      v?.calculated_price?.calculated_amount ??
+      v?.prices?.[0]?.amount ??
+      0;
+    return s + amount * i.qty;
   }, 0);
 
   const addItem = useCallback((product: Product) => {
