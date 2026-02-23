@@ -6,8 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VITE_MEDUSA_BACKEND_URL: "https://api.store.superproductos.com"
-        VITE_MEDUSA_PUBLISHABLE_KEY: "pk_380814bb86440d950889cae9f644b7a1e0139c030d61b46cefb0c0110d9837f1"
+        NEXT_PUBLIC_MEDUSA_BACKEND_URL: ${NEXT_PUBLIC_MEDUSA_BACKEND_URL}
+        NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY: ${NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY}
 
     image: delta:git
     restart: unless-stopped
@@ -22,7 +22,9 @@ services:
       - traefik.http.routers.delta.entrypoints=websecure
       - traefik.http.routers.delta.tls=true
       - traefik.http.routers.delta.tls.certresolver=le
-      - traefik.http.services.delta.loadbalancer.server.port=80
+
+      # IMPORTANT: Next.js runs on 3000 inside the container
+      - traefik.http.services.delta.loadbalancer.server.port=3000
 
       - traefik.http.routers.delta-http.rule=Host(`delta.yupiyes.com`)
       - traefik.http.routers.delta-http.entrypoints=web
