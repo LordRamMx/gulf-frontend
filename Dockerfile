@@ -1,34 +1,34 @@
-# ---- deps ----
-FROM node:20-alpine AS deps
-WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY package.json yarn.lock .yarnrc.yml ./
-RUN corepack enable && yarn install --frozen-lockfile
-
 # ---- build ----
 FROM node:20-alpine AS build
 WORKDIR /app
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
 
-# build args -> env so next build can see them
-ARG NEXT_PUBLIC_MEDUSA_BACKEND_URL
-ARG NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
-ENV NEXT_PUBLIC_MEDUSA_BACKEND_URL=$NEXT_PUBLIC_MEDUSA_BACKEND_URL
-ENV NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY=$NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
+COPY package.json package-lock.json ./
+RUN npm ci
 
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN corepack enable && yarn build
+
+# Vite build-time variables
+ARG VITE_MEDUSA_BACKEND_URL
+ARG VITE_MEDUSA_PUBLISHABLE_KEY
+ENV VITE_MEDUSA_BACKEND_URL=$VITE_MEDUSA_BACKEND_URL
+ENV VITE_MEDUSA_PUBLISHABLE_KEY=$VITE_MEDUSA_PUBLISHABLE_KEY
+
+RUN npm run build
 
 # ---- run ----
-FROM node:20-alpine AS run
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
-ENV NEXT_TELEMETRY_DISABLED=1
+FROM nginx:1.27-alpine AS run
+COPY --from=build /app/dist /usr/share/nginx/html
 
-COPY --from=build /app ./
+# Optional: SPA routing fallback (good for React Router)
+RUN printf 'server {\n\
+  listen 80;\n\
+  server_name _;\n\
+  root /usr/share/nginx/html;\n\
+  index index.html;\n\
+  location / {\n\
+    try_files $uri $uri/ /index.html;\n\
+  }\n\
+}\n' > /etc/nginx/conf.d/default.conf
 
-EXPOSE 3000
-CMD ["yarn", "start", "-p", "3000"]
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

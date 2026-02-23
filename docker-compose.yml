@@ -1,29 +1,35 @@
-FROM node:20-alpine AS deps
-WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY package*.json ./
-RUN npm ci
+version: "3.9"
 
-FROM node:20-alpine AS build
-WORKDIR /app
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+services:
+  delta:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_MEDUSA_BACKEND_URL: "https://api.store.superproductos.com"
+        VITE_MEDUSA_PUBLISHABLE_KEY: "pk_380814bb86440d950889cae9f644b7a1e0139c030d61b46cefb0c0110d9837f1"
 
-ARG NEXT_PUBLIC_MEDUSA_BACKEND_URL
-ARG NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
-ENV NEXT_PUBLIC_MEDUSA_BACKEND_URL=$NEXT_PUBLIC_MEDUSA_BACKEND_URL
-ENV NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY=$NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY
+    image: delta:git
+    restart: unless-stopped
+    networks:
+      - proxy
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN npm run build
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
 
-FROM node:20-alpine AS run
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
-ENV NEXT_TELEMETRY_DISABLED=1
+      - traefik.http.routers.delta.rule=Host(`delta.yupiyes.com`)
+      - traefik.http.routers.delta.entrypoints=websecure
+      - traefik.http.routers.delta.tls=true
+      - traefik.http.routers.delta.tls.certresolver=le
+      - traefik.http.services.delta.loadbalancer.server.port=80
 
-COPY --from=build /app ./
-EXPOSE 3000
-CMD ["npm", "run", "start", "--", "-p", "3000"]
+      - traefik.http.routers.delta-http.rule=Host(`delta.yupiyes.com`)
+      - traefik.http.routers.delta-http.entrypoints=web
+      - traefik.http.routers.delta-http.middlewares=delta-redirect
+      - traefik.http.middlewares.delta-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.delta-redirect.redirectscheme.permanent=true
+
+networks:
+  proxy:
+    external: true
