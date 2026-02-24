@@ -5,7 +5,9 @@ import MarketplaceHeader from "@/components/MarketplaceHeader";
 import FeaturesBar from "@/components/FeaturesBar";
 import ProductGridCard from "@/components/ProductGridCard";
 import Footer from "@/components/Footer";
+
 import { useFeaturedProducts, useMedusaCategories, useMedusaCollections } from "@/hooks/useMedusaStore";
+
 import heroImage from "@/assets/hero-vitamins.jpg";
 
 import prodVitaminaC from "@/assets/prod-vitamina-c.jpg";
@@ -24,6 +26,7 @@ const PRODUCT_IMAGES: Record<string, string> = {
   "vitamina-d": prodVitaminaD,
   "hierro": prodHierro,
   // Keep old mock ids for backwards compatibility
+
   prod_1: prodVitaminaC,
   prod_2: prodMagnesio,
   prod_3: prodOmega3,
