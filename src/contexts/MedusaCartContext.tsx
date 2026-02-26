@@ -3,6 +3,7 @@ import { storeApi } from "@/lib/medusa-store"
 
 const CART_ID_KEY = "medusa_cart_id"
 const REGION_ID = import.meta.env.VITE_MEDUSA_REGION_ID as string
+const VAR1 = import.meta.env.VITE_VAR_1 as string
 
 type MedusaCart = any
 
@@ -44,6 +45,7 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
     }
 
     if (!REGION_ID) {
+        console.log("--> " + VAR1);
       throw new Error("VITE_MEDUSA_REGION_ID no está configurado")
     }
 
