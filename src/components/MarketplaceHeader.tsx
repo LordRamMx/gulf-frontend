@@ -53,7 +53,7 @@ const MarketplaceHeader = () => {
         {/* Logo */}
         <Link to="/" className="flex items-center gap-2 shrink-0">
           <Leaf className="h-7 w-7 text-primary" />
-          <span className="font-display text-xl font-bold text-foreground">VidaVerde</span>
+          <span className="font-display text-xl font-bold text-foreground">VidaVerde 0.1</span>
         </Link>
 
         {/* Search bar */}
