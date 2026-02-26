@@ -45,8 +45,8 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
     }
 
     if (!REGION_ID) {
-        console.log("--> " + VAR1);
-      throw new Error("VITE_MEDUSA_REGION_ID no está configurado")
+        
+      throw new Error("VITE_MEDUSA_REGION_ID no está configurado: " + VAR1)
     }
 
     const { cart } = await storeApi.createCart({ region_id: REGION_ID })
