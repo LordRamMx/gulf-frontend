@@ -16,6 +16,7 @@ const ProductGridCard = ({ product }: ProductGridCardProps) => {
   const variantId = product.variants?.[0]?.id;
 
   const handleAddToCart = async () => {
+    console.log("variantId:", product?.variants?.[0]?.id);
     if (!variantId) {
       toast.error("Este producto no tiene variante disponible");
       return;
