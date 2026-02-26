@@ -2,11 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ShoppingCart, Menu, X, Leaf, Search, ChevronDown, User } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useCart } from "@/contexts/CartContext";
+import { useMedusaCart } from "@/contexts/MedusaCartContext";
 import { useMedusaCategories } from "@/hooks/useMedusaStore";
 
 const MarketplaceHeader = () => {
-  const { count } = useCart();
+  const { count } = useMedusaCart();
   const { data: categories } = useMedusaCategories();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
