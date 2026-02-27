@@ -147,6 +147,10 @@ export interface Cart {
   tax_total: number;
   shipping_total: number;
   currency_code: string;
+
+  discount_total?: number;
+  discounts?: any[];
+  promotions?: any[];
 }
 
 // ─── Low-level fetch helper ───────────────────────────────────
@@ -299,6 +303,24 @@ export async function deleteLineItem(
     `/carts/${cartId}/line-items/${lineItemId}`,
     { method: "DELETE" }
   );
+  return data.cart;
+}
+
+/** Apply one or more promotion codes to a cart */
+export async function applyPromotions(cartId: string, promoCodes: string[]): Promise<Cart> {
+  const data = await medusaFetch<{ cart: Cart }>(`/carts/${cartId}/promotions`, {
+    method: "POST",
+    body: JSON.stringify({ promo_codes: promoCodes }),
+  });
+  return data.cart;
+}
+
+/** Remove one or more promotion codes from a cart */
+export async function removePromotions(cartId: string, promoCodes: string[]): Promise<Cart> {
+  const data = await medusaFetch<{ cart: Cart }>(`/carts/${cartId}/promotions`, {
+    method: "DELETE",
+    body: JSON.stringify({ promo_codes: promoCodes }),
+  });
   return data.cart;
 }
 
