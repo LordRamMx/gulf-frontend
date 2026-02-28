@@ -357,14 +357,21 @@ export function getVariantPrice(variant: ProductVariant): MoneyAmount | null {
 
 export function formatPrice(
   amount: number,
-  currencyCode = "EUR",
-  locale = "es-ES"
+  currencyCode = "MXN",
+  locale = "es-MX"
 ): string {
+  if (amount == null) return "$0.00";
+
+  // Si el valor parece estar ya en pesos (ej: 50),
+  // no lo dividimos. Si es mayor que 999, asumimos centavos (5000 → 50.00)
+  const normalized =
+    amount > 999 ? amount / 100 : amount;
+
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: currencyCode.toUpperCase(),
     minimumFractionDigits: 2,
-  }).format(amount / 100);
+  }).format(normalized);
 }
 
 // ─── Mock data (development / Storybook) ─────────────────────
@@ -502,7 +509,7 @@ function generateMockProducts(): Product[] {
         prices: [
           {
             amount: 799 + ((i * 313 + 99) % 2500),
-            currency_code: "eur",
+            currency_code: "mxn",
           },
         ],
       },
