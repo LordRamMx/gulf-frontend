@@ -153,6 +153,26 @@ export interface Cart {
   promotions?: any[];
 }
 
+// ─── Regions ──────────────────────────────────────────────────
+
+export interface Region {
+  id: string;
+  name: string;
+  currency_code: string;
+  countries: { iso_2: string; name: string }[];
+}
+
+export interface ShippingOption {
+  id: string
+  name?: string
+  amount?: number
+}
+
+export interface PaymentProvider {
+  id: string
+  name?: string
+}
+
 // ─── Low-level fetch helper ───────────────────────────────────
 
 async function medusaFetch<T>(
@@ -324,19 +344,73 @@ export async function removePromotions(cartId: string, promoCodes: string[]): Pr
   return data.cart;
 }
 
-// ─── Regions ──────────────────────────────────────────────────
-
-export interface Region {
-  id: string;
-  name: string;
-  currency_code: string;
-  countries: { iso_2: string; name: string }[];
-}
-
 export async function getRegions(): Promise<Region[]> {
   const data = await medusaFetch<{ regions: Region[] }>("/regions");
   return data.regions;
 }
+
+export async function updateCart(cartId: string, body: Record<string, any>): Promise<Cart> {
+  const data = await medusaFetch<{ cart: Cart }>(`/carts/${cartId}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+  return data.cart
+}
+
+export async function listShippingOptions(cartId: string): Promise<ShippingOption[]> {
+  const data = await medusaFetch<{ shipping_options: ShippingOption[] }>(
+    `/shipping-options?cart_id=${encodeURIComponent(cartId)}`
+  )
+  return data.shipping_options
+}
+
+export async function addShippingMethod(cartId: string, optionId: string): Promise<Cart> {
+  const data = await medusaFetch<{ cart: Cart }>(`/carts/${cartId}/shipping-methods`, {
+    method: "POST",
+    body: JSON.stringify({ option_id: optionId }),
+  })
+  return data.cart
+}
+
+export async function listPaymentProviders(regionId: string): Promise<PaymentProvider[]> {
+  const data = await medusaFetch<{ payment_providers: PaymentProvider[] }>(
+    `/payment-providers?region_id=${encodeURIComponent(regionId)}`
+  )
+  return data.payment_providers
+}
+
+// Payment Collections / Sessions
+export async function createPaymentCollection(cartId: string): Promise<any> {
+  const data = await medusaFetch<{ payment_collection: any }>(`/payment-collections`, {
+    method: "POST",
+    body: JSON.stringify({ cart_id: cartId }),
+  })
+  return data.payment_collection
+}
+
+export async function initPaymentSession(paymentCollectionId: string, providerId: string): Promise<any> {
+  const data = await medusaFetch<{ payment_collection: any }>(
+    `/payment-collections/${paymentCollectionId}/sessions`,
+    {
+      method: "POST",
+      body: JSON.stringify({ provider_id: providerId }),
+    }
+  )
+  return data.payment_collection
+}
+
+// (Opcional pero recomendado) autorizar sesión si tu proveedor lo requiere
+export async function authorizePaymentSession(paymentCollectionId: string, sessionId: string): Promise<any> {
+  return medusaFetch<any>(
+    `/payment-collections/${paymentCollectionId}/sessions/${sessionId}/authorize`,
+    { method: "POST" }
+  )
+}
+
+export async function completeCart(cartId: string): Promise<any> {
+  return medusaFetch<any>(`/carts/${cartId}/complete`, { method: "POST" })
+}
+
 
 // ─── Price helpers ────────────────────────────────────────────
 

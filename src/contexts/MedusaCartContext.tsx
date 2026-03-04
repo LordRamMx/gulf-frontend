@@ -4,11 +4,21 @@ import { storeApi } from "@/lib/medusa-store"
 import {
   addLineItem,
   createCart,
+  updateCart,
   getCart,
   updateLineItem,
   deleteLineItem,
   applyPromotions,
   removePromotions,
+  listShippingOptions,
+  addShippingMethod,
+  listPaymentProviders,
+  createPaymentCollection,
+  initPaymentSession,
+  authorizePaymentSession,
+  completeCart,
+  ShippingOption,
+  PaymentProvider,
   type Cart,
 } from "@/lib/medusa-client";
 
@@ -27,6 +37,19 @@ type Ctx = {
   removeItem: (lineItemId: string) => Promise<void>;
   applyCoupon: (code: string) => Promise<void>;
   removeCoupon: (code: string) => Promise<void>;
+
+  setContactAndAddress: (data: {
+    email: string
+    shipping_address: any
+    billing_address?: any
+  }) => Promise<void>
+
+  getShippingOptions: () => Promise<ShippingOption[]>
+  setShippingOption: (optionId: string) => Promise<void>
+
+  getPaymentProviders: () => Promise<PaymentProvider[]>
+  initPayment: (providerId: string) => Promise<{ redirectUrl?: string }>
+  complete: () => Promise<any>
   refresh: () => Promise<void>
 }
 
@@ -146,7 +169,81 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
     }
     }, [ensureCart]);
 
-  
+    const setContactAndAddress = useCallback(async (data: any) => {
+    try {
+        await ensureCart();
+        const id = getCartId()
+        const updated = await updateCart(id, data);
+        setCart(updated);
+    } catch (e) {
+        console.error(e);
+        toast.error("No se pudo guardar la información de envío");
+    }
+    }, [ensureCart]);
+
+    const getShippingOptions = useCallback(async () => {
+        await ensureCart();
+        const id = getCartId()
+    return listShippingOptions(id);
+    }, [ensureCart]);
+
+    const setShippingOption = useCallback(async (optionId: string) => {
+    try {
+        await ensureCart();
+        const id = getCartId()
+        const updated = await addShippingMethod(id, optionId);
+        setCart(updated);
+    } catch (e) {
+        console.error(e);
+        toast.error("No se pudo aplicar el método de envío");
+    }
+    }, [ensureCart]);
+
+    const getPaymentProviders = useCallback(async () => {
+        const c = await ensureCart();
+        if (REGION_ID) return [];
+        return listPaymentProviders(REGION_ID);
+    }, [ensureCart]);
+
+    const initPayment = useCallback(async (providerId: string) => {
+    
+    const id = getCartId()
+    // 1) obtener/crear payment collection
+    const fresh = await getCart(id);
+    const pcId =
+        (fresh as any)?.payment_collection?.id
+        ? (fresh as any).payment_collection.id
+        : (await createPaymentCollection(id)).id;
+
+    // 2) inicializar sesión
+    const paymentCollection = await initPaymentSession(pcId, providerId);
+
+    // 3) buscar redirectUrl (MercadoPago normalmente)
+    const sessions =
+        paymentCollection?.payment_sessions ||
+        paymentCollection?.sessions ||
+        [];
+
+    const session = sessions.find((s: any) => s.provider_id === providerId);
+
+    const redirectUrl =
+        session?.data?.init_point ||
+        session?.data?.redirect_url ||
+        session?.data?.url;
+
+    // refresca cart (por si tu backend actualiza el cart separado)
+    await refresh();
+
+    return { redirectUrl };
+    }, [ensureCart, refresh]);
+
+    const complete = useCallback(async () => {
+    await ensureCart();
+    const id = getCartId()
+    return completeCart(id);
+    }, [ensureCart]);
+
+    
 
     const count = useMemo(() => {
         const items = cart?.items ?? cart?.line_items ?? []
@@ -176,6 +273,12 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
             removeItem,
             applyCoupon,
             removeCoupon,
+            setContactAndAddress,
+            getShippingOptions,
+            setShippingOption,
+            getPaymentProviders,
+            initPayment,
+            complete,
             refresh,
         }}
         >

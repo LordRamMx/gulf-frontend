@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Minus, Plus, Trash2, ArrowRight } from "lucide-react";
+import { Minus, Plus, Trash2, ArrowRight, ArrowLeft } from "lucide-react";
 
 import MarketplaceHeader from "@/components/MarketplaceHeader";
 import Footer from "@/components/Footer";
@@ -50,7 +50,7 @@ export default function CartPage() {
           </div>
 
           <Link to="/productos" className="text-sm text-primary hover:underline">
-            Seguir comprando
+            <ArrowLeft className="h-4 w-4" /> Seguir comprando
           </Link>
         </div>
 
@@ -233,7 +233,7 @@ export default function CartPage() {
                   onClick={() => navigate("/checkout")}
                 >
                   Finalizar compra
-                  <ArrowRight className="ml-2 h-4 w-4" />
+                  <ArrowRight className="ml-0 h-4 w-4" />
                 </Button>
               </CardContent>
             </Card>
