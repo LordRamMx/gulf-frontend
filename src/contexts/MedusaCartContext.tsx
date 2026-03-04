@@ -51,6 +51,8 @@ type Ctx = {
   initPayment: (providerId: string) => Promise<{ redirectUrl?: string }>
   complete: () => Promise<any>
   refresh: () => Promise<void>
+
+  clearLocalCart: () => void;
 }
 
 const MedusaCartContext = createContext<Ctx | null>(null)
@@ -243,7 +245,10 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
     return completeCart(id);
     }, [ensureCart]);
 
-    
+    const clearLocalCart = () => {
+        localStorage.removeItem(CART_ID_KEY);
+        setCart(null);
+    };
 
     const count = useMemo(() => {
         const items = cart?.items ?? cart?.line_items ?? []
@@ -280,6 +285,7 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
             initPayment,
             complete,
             refresh,
+            clearLocalCart
         }}
         >
         {children}

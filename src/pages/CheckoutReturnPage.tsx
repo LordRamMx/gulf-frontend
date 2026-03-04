@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMedusaCart } from "@/contexts/MedusaCartContext";
 
 export default function CheckoutReturnPage() {
-  /*onst navigate = useNavigate();
+  const navigate = useNavigate();
   const { refresh, complete, clearLocalCart } = useMedusaCart();
   const [status, setStatus] = useState("Procesando pago...");
 
@@ -32,5 +32,5 @@ export default function CheckoutReturnPage() {
         Si esto tarda, es normal: estamos esperando confirmación del proveedor.
       </p>
     </div>
-  );*/
+  );
 }
