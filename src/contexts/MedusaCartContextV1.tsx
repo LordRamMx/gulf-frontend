@@ -18,13 +18,12 @@ import {
   deleteLineItem,
   getCart,
   initPaymentSession,
-  inferMpProviderId,
-  isMercadoPagoProvider,
   listPaymentProviders,
   listShippingOptions,
   PaymentProvider,
   removePromotions,
   ShippingOption,
+  submitMercadoPagoPayment,
   type Cart,
   updateCart,
   updateLineItem,
@@ -35,7 +34,7 @@ const REGION_ID = import.meta.env.VITE_MEDUSA_REGION_ID as string | undefined;
 
 export type MercadoPagoBrickPayload = {
   token?: string;
-  issuer_id?: string | number;
+  issuer_id?: string;
   transaction_amount: number;
   installments?: number;
   payer: {
@@ -73,30 +72,10 @@ type Ctx = {
   setShippingOption: (optionId: string) => Promise<void>;
 
   getPaymentProviders: () => Promise<PaymentProvider[]>;
-
-  /**
-   * Inicializa la payment session para el providerId dado.
-   * Para los providers de MP (@qbk) devuelve el paymentSessionId de la sesión creada.
-   */
-  initPayment: (
-    providerId: string,
-    existingPcId?: string
-  ) => Promise<{ paymentSessionId?: string; paymentCollectionId?: string; redirectUrl?: string }>;
-
-  /**
-   * Envía el pago al endpoint del plugin @qbk/mercadopago-medusa-plugin.
-   * Internamente infiere el provider correcto (crédito/débito/efectivo)
-   * a partir del formData del Brick y reinicializa la session si es necesario.
-   */
-  submitMercadoPagoBrick: (
-    cartId: string,
-    currentSessionId: string,
-    currentProviderId: string,
-    payload: MercadoPagoBrickPayload,
-    paymentCollectionId: string
-  ) => Promise<{ sessionId: string; providerId: string }>;
-
+  initPayment: (providerId: string) => Promise<{ paymentSessionId?: string; redirectUrl?: string }>;
+  submitMercadoPagoBrick: (paymentSessionId: string, payload: MercadoPagoBrickPayload) => Promise<any>;
   complete: () => Promise<any>;
+
   clearLocalCart: () => void;
 };
 
@@ -112,6 +91,11 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
   const [cart, setCart] = useState<Cart | null>(null);
   const [isReady, setIsReady] = useState(false);
 
+  /**
+   * Este ref invalida requests viejas del carrito.
+   * Si limpiamos el carrito mientras una request está en vuelo,
+   * evitamos que esa respuesta "reviva" el cart en memoria.
+   */
   const cartRequestVersionRef = useRef(0);
 
   const getCartId = () => localStorage.getItem(CART_ID_KEY);
@@ -135,6 +119,7 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
     try {
       const c = await getCart(id);
 
+      // Si el carrito fue invalidado mientras esperábamos, ignoramos la respuesta
       if (cartRequestVersionRef.current !== requestVersion) return;
       if (getCartId() !== id) return;
 
@@ -317,42 +302,24 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
     return listPaymentProviders(regionId);
   }, [ensureCart]);
 
-  /**
-   * Crea (o reutiliza) el PaymentCollection e inicializa la session
-   * para el providerId recibido.
-   *
-   * Si se pasa pcId directamente (desde CheckoutPage que ya tiene el cart
-   * en memoria), se evitan los fetches de ensureCart + getCart que
-   * introducen latencia y pueden invalidar el token de tarjeta de MP.
-   */
   const initPayment = useCallback(
-    async (providerId: string, existingPcId?: string) => {
-      let pcId = existingPcId;
+    async (providerId: string) => {
+      const c = await ensureCart();
+      const fresh = await getCart(c.id);
 
-      if (!pcId) {
-        // Solo hacer fetch si no tenemos el pcId disponible
-        const c = await ensureCart();
-        const fresh = await getCart(c.id);
-        const pc =
-          (fresh as any)?.payment_collection ?? (await createPaymentCollection(c.id));
-        pcId = pc.id;
-      }
+      const pc = (fresh as any)?.payment_collection ?? (await createPaymentCollection(c.id));
+      const pcId = pc.id;
 
-      const paymentCollection = await initPaymentSession(pcId!, providerId, {
-        mpPaymentBody: {},
-      });
+      const paymentCollection = await initPaymentSession(pcId, providerId);
 
-      const sessions =
-        paymentCollection?.payment_sessions || paymentCollection?.sessions || [];
+      const sessions = paymentCollection?.payment_sessions || paymentCollection?.sessions || [];
 
-      const session =
-        sessions.find((s: any) => s.provider_id === providerId) || sessions[0];
+      const session = sessions.find((s: any) => s.provider_id === providerId) || sessions[0];
 
-      // No llamar refresh() aquí — el cart se actualizará cuando sea necesario,
-      // evitamos el GET extra que puede invalidar el token de tarjeta de MP.
+      await refresh();
+
       return {
         paymentSessionId: session?.id,
-        paymentCollectionId: pcId!,
         redirectUrl:
           session?.data?.init_point ||
           session?.data?.sandbox_init_point ||
@@ -360,72 +327,12 @@ export function MedusaCartProvider({ children }: { children: React.ReactNode }) 
           session?.data?.url,
       };
     },
-    [ensureCart]
+    [ensureCart, refresh]
   );
 
-  /**
-   * Flujo correcto con el plugin @qbk (ModuleProvider estándar, sin endpoints propios):
-   *
-   * 1. Inferir el provider correcto (crédito/débito/efectivo) desde el formData del Brick.
-   * 2. Crear una NUEVA sesión con el provider correcto y el mpPaymentBody real.
-   *    La Store API de Medusa no expone un endpoint para actualizar una sesión
-   *    existente, así que recreamos la sesión con el payload completo.
-   * 3. Completar el carrito → POST /store/carts/:id/complete
-   *    Medusa dispara authorizePayment en el plugin, que lee data.mpPaymentBody
-   *    y llama a createPayment → API de Mercado Pago.
-   */
   const submitMercadoPagoBrick = useCallback(
-    async (
-      cartId: string,
-      _currentSessionId: string,
-      _currentProviderId: string,
-      payload: MercadoPagoBrickPayload,
-      // paymentCollectionId se pasa desde el CheckoutPage para evitar
-      // fetches adicionales del carrito que introducen delay y pueden
-      // invalidar el token de tarjeta de MP (que es de un solo uso).
-      paymentCollectionId: string
-    ) => {
-      // 1. Inferir provider correcto según lo que el usuario eligió en el Brick
-      const correctProviderId = inferMpProviderId({
-        token: payload.token,
-        payment_method_id: payload.payment_method_id,
-      });
-
-      console.log(`[MP] provider inferido: ${correctProviderId}`);
-
-      // 2. Construir el mpPaymentBody real con los datos del Brick
-      const mpPaymentBody: Record<string, any> = {
-        transaction_amount: payload.transaction_amount,
-        payment_method_id: payload.payment_method_id,
-        payer: payload.payer,
-      };
-      if (payload.token)        mpPaymentBody.token        = payload.token;
-      if (payload.issuer_id)    mpPaymentBody.issuer_id    = Number(payload.issuer_id);
-      if (payload.installments) mpPaymentBody.installments = payload.installments;
-
-      // 3. Crear nueva sesión con el provider correcto y el mpPaymentBody real.
-      //    Usamos paymentCollectionId del estado del cart (ya disponible en el
-      //    frontend) para evitar fetches extra que retrasan el envío del token.
-      const paymentCollection = await initPaymentSession(
-        paymentCollectionId,
-        correctProviderId,
-        { mpPaymentBody }
-      );
-
-      const sessions =
-        paymentCollection?.payment_sessions || paymentCollection?.sessions || [];
-      const session =
-        sessions.find((s: any) => s.provider_id === correctProviderId) || sessions[0];
-
-      if (!session?.id) {
-        throw new Error("No se pudo crear la payment session con el payload del Brick");
-      }
-
-      console.log(`[MP] sesión creada: ${session.id} con provider: ${correctProviderId}`);
-
-      // No llamamos completeCart aquí — eso lo hace CheckoutReturnPage
-      // con reintentos para evitar dobles llamadas y manejar mejor los errores.
-      return { sessionId: session.id, providerId: correctProviderId };
+    async (paymentSessionId: string, payload: MercadoPagoBrickPayload) => {
+        return submitMercadoPagoPayment(paymentSessionId, payload);
     },
     []
   );

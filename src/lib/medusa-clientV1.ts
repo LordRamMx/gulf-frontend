@@ -158,50 +158,6 @@ export interface PaymentProvider {
   name?: string;
 }
 
-// ─── IDs de providers del plugin @qbk/mercadopago-medusa-plugin ───────────────
-export const MP_PROVIDER_CREDIT  = "pp_credit_mercadopago";
-export const MP_PROVIDER_DEBIT   = "pp_debit_mercadopago";
-export const MP_PROVIDER_TICKET  = "pp_ticket_mercadopago";
-
-export const MP_PROVIDERS = [MP_PROVIDER_CREDIT, MP_PROVIDER_DEBIT, MP_PROVIDER_TICKET] as const;
-export type MpProviderId = typeof MP_PROVIDERS[number];
-
-/** Devuelve true si el provider_id pertenece al plugin de Mercado Pago */
-export function isMercadoPagoProvider(id: string): boolean {
-  return (MP_PROVIDERS as readonly string[]).includes(id);
-}
-
-/**
- * A partir del payment_method_id que devuelve el Brick de MP,
- * infiere cuál de los 3 providers debe usarse.
- *
- * Lógica:
- *  - Sin token  → efectivo/ticket
- *  - Con token y payment_method_id empieza con "debit" → débito
- *  - Con token resto → crédito
- *
- * Puedes ajustar la heurística según los payment_method_id reales que
- * devuelva Mercado Pago para México (ej: "debvisa", "debmaster", etc.)
- */
-export function inferMpProviderId(formData: {
-  token?: string;
-  payment_method_id?: string;
-}): MpProviderId {
-  if (!formData.token) {
-    // Sin token → pago en efectivo (OXXO, 7-Eleven, etc.)
-    return MP_PROVIDER_TICKET;
-  }
-
-  const pmId = (formData.payment_method_id ?? "").toLowerCase();
-
-  // Heurística: IDs de débito en MX suelen iniciar con "deb" o contener "debit"
-  if (pmId.startsWith("deb") || pmId.includes("debit")) {
-    return MP_PROVIDER_DEBIT;
-  }
-
-  return MP_PROVIDER_CREDIT;
-}
-
 async function medusaFetch<T>(
   endpoint: string,
   options?: RequestInit
@@ -388,60 +344,15 @@ export async function createPaymentCollection(cartId: string): Promise<any> {
   return data.payment_collection;
 }
 
-export async function initPaymentSession(
-  paymentCollectionId: string,
-  providerId: string,
-  // Medusa pasa este objeto como `data` al método initiatePayment del provider.
-  // El plugin @qbk valida data.mpPaymentBody con Zod — todos los campos son
-  // .optional() pero safeParse(undefined) falla porque el schema raiz espera
-  // un objeto. Por eso pasamos al menos { mpPaymentBody: {} }.
-  // IMPORTANTE: debe ir dentro de "data", no en el root del body (Medusa
-  // rechaza campos desconocidos en el root con "Unrecognized fields").
-  sessionData?: Record<string, any>
-): Promise<any> {
+export async function initPaymentSession(paymentCollectionId: string, providerId: string): Promise<any> {
   const data = await medusaFetch<{ payment_collection: any }>(
     `/payment-collections/${paymentCollectionId}/payment-sessions`,
     {
       method: "POST",
-      body: JSON.stringify({
-        provider_id: providerId,
-        data: sessionData ?? {},
-      }),
+      body: JSON.stringify({ provider_id: providerId }),
     }
   );
   return data.payment_collection;
-}
-
-
-
-
-/**
- * Obtiene el ticket URL de OXXO/efectivo desde el backend.
- * El plugin @qbk guarda externalResourceUrl en session.data durante
- * authorizePayment — el endpoint lo lee directamente sin consultar MP.
- * Endpoint: GET /store/mercadopago/ticketurl?cart_id=...
- */
-export async function getTicketUrl(params: {
-  cartId: string;
-}): Promise<{ ticketUrl: string | null; mpPaymentId?: string | number }> {
-  const qs = `cart_id=${encodeURIComponent(params.cartId)}`;
-
-  const res = await fetch(`${MEDUSA_BACKEND_URL}/store/mercadopago/ticketurl?${qs}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(MEDUSA_PUBLISHABLE_KEY
-        ? { "x-publishable-api-key": MEDUSA_PUBLISHABLE_KEY }
-        : {}),
-    },
-    credentials: "include",
-  });
-
-  if (!res.ok) {
-    console.warn("[MP] getTicketUrl:", res.status, await res.text().catch(() => ""));
-    return { ticketUrl: null };
-  }
-
-  return res.json();
 }
 
 export async function authorizePaymentSession(paymentCollectionId: string, sessionId: string): Promise<any> {
@@ -455,22 +366,57 @@ export async function completeCart(cartId: string): Promise<any> {
   return medusaFetch<any>(`/carts/${cartId}/complete`, { method: "POST" });
 }
 
-/**
- * Submits a Mercado Pago payment via el plugin @qbk/mercadopago-medusa-plugin.
- *
- * El plugin expone el endpoint:
- *   POST /store/mercadopago/pay
- *
- * Body esperado:
- *   {
- *     cart_id: string,
- *     payment_session_id: string,
- *     formData: { token?, issuer_id?, payment_method_id, transaction_amount, installments?, payer }
- *   }
- *
- * El plugin identifica automáticamente si es crédito, débito o efectivo
- * según el payment_method_id y el provider_id de la sesión.
- */
+export async function submitMercadoPagoPayment(
+  paymentSessionId: string,
+  paymentData: {
+    token?: string;
+    issuer_id?: string;
+    transaction_amount: number;
+    installments?: number;
+    payer: {
+      email?: string;
+      identification?: {
+        type: string;
+        number: string;
+      };
+    };
+    payment_method_id: string;
+  }
+): Promise<any> {
+  const res = await fetch(`${MEDUSA_BACKEND_URL}/store/mercadopago/payment`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(MEDUSA_PUBLISHABLE_KEY
+        ? { "x-publishable-api-key": MEDUSA_PUBLISHABLE_KEY }
+        : {}),
+    },
+    body: JSON.stringify({ paymentSessionId, paymentData }),
+  });
+
+  const text = await res.text();
+
+  console.log("MP payment status", res.status);
+  console.log("MP payment response", text);
+
+  if (!res.ok) {
+    throw new Error(`MercadoPago payment ${res.status}: ${text}`);
+  }
+
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text;
+  }
+}
+
+export async function getMercadoPagoPaymentMethods(providerId = "mercadopago"): Promise<any[]> {
+  const data = await medusaFetch<{ paymentMethods: any[] }>(
+    `/mercadopago/payment-methods?provider_id=${encodeURIComponent(providerId)}`
+  );
+  return data.paymentMethods;
+}
 
 export async function getRegions(): Promise<Region[]> {
   const data = await medusaFetch<{ regions: Region[] }>("/regions");
@@ -494,16 +440,18 @@ export function formatPrice(
 ): string {
   if (amount == null) return "$0.00";
 
-  // Medusa v2 devuelve los precios en formato decimal (no en centavos).
-  // No se hace ninguna conversión — se formatea el valor tal como llega.
+  const normalized = amount > 999 ? amount / 100 : amount;
+
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: currencyCode.toUpperCase(),
     minimumFractionDigits: 2,
-  }).format(amount);
+  }).format(normalized);
 }
 
 // ─── Mock data (development / Storybook) ─────────────────────
+// Used when no Medusa backend is available. Remove / gate behind env var in production.
+
 export const MOCK_CATEGORIES: ProductCategory[] = [
   {
     id: "cat_1", name: "Vitaminas", handle: "vitaminas",
@@ -622,6 +570,7 @@ function generateMockProducts(): Product[] {
 
   const badges = ["Más vendido", "Nuevo", "Popular", "-20%", "Oferta", ""];
 
+  // Use a seeded-like deterministic approach to avoid re-renders changing prices
   return defs.map(([title, handle, description, colId], i) => ({
     id: `prod_${i + 1}`,
     title,
@@ -649,6 +598,10 @@ function generateMockProducts(): Product[] {
 
 export const MOCK_PRODUCTS: Product[] = generateMockProducts();
 
+/**
+ * filterMockProducts — simulates Medusa v2 API filtering locally.
+ * Replace calls to this with `getProducts()` once your backend is live.
+ */
 export function filterMockProducts(
   params: ProductSearchParams
 ): PaginatedProducts {
@@ -669,6 +622,7 @@ export function filterMockProducts(
     );
   }
 
+  // Medusa v2 sort field format: "variants.prices.amount" / "-variants.prices.amount"
   if (params.order === "variants.prices.amount" || params.order === "price_asc") {
     filtered.sort(
       (a, b) =>
@@ -684,6 +638,7 @@ export function filterMockProducts(
   } else if (params.order === "title") {
     filtered.sort((a, b) => a.title.localeCompare(b.title, "es"));
   } else if (params.order === "-created_at") {
+    // newest first — mock keeps insertion order as "newest"
     filtered.reverse();
   }
 

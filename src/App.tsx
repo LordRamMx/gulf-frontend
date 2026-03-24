@@ -10,6 +10,7 @@ import CartPage from "@/pages/CartPage";
 import NotFound from "./pages/NotFound";
 import CheckoutPage from "@/pages/CheckoutPage";
 import CheckoutReturnPage from "@/pages/CheckoutReturnPage";
+import CheckoutPendingPage from "@/pages/CheckoutPendingPage";
 
 const queryClient = new QueryClient();
 
@@ -27,6 +28,7 @@ const App = () => (
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="/checkout" element={<CheckoutPage />} />
             <Route path="/checkout/return" element={<CheckoutReturnPage />} />
+            <Route path="/checkout/pending" element={<CheckoutPendingPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
 import MarketplaceHeader from "@/components/MarketplaceHeader";
 import Footer from "@/components/Footer";
 import { useMedusaCart } from "@/contexts/MedusaCartContext";
-import { formatPrice, getCart, getTicketUrl, isMercadoPagoProvider, MP_PROVIDER_CREDIT } from "@/lib/medusa-client";
+import { formatPrice } from "@/lib/medusa-client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,11 +18,6 @@ import { Separator } from "@/components/ui/separator";
 import { initMercadoPago, Payment } from "@mercadopago/sdk-react";
 
 const MERCADOPAGO_PUBLIC_KEY = import.meta.env.VITE_MERCADOPAGO_PUBLIC_KEY as string;
-
-// Guard fuera del componente para evitar doble submit del Brick de MP.
-// Usamos un Set de cartIds ya procesados — Set.has() + Set.add() es síncrono
-// y no puede ser bypasseado por dos llamadas simultáneas del Brick.
-const _processingCarts = new Set<string>();
 
 const MEXICO_STATES = [
   "Aguascalientes",
@@ -60,14 +55,10 @@ const MEXICO_STATES = [
 ] as const;
 
 if (MERCADOPAGO_PUBLIC_KEY) {
-  initMercadoPago(MERCADOPAGO_PUBLIC_KEY, { locale: "es-MX" });
+  initMercadoPago(MERCADOPAGO_PUBLIC_KEY, {
+    locale: "es-MX",
+  });
 }
-
-// ── Constante de UI para el provider "paraguas" de Mercado Pago ──────────────
-// Todos los providers del plugin (pp_credit_mercadopago, pp_debit_mercadopago,
-// pp_ticket_mercadopago) se agrupan bajo este ID de UI. El provider real se
-// resuelve en el momento del submit según lo que el usuario elija en el Brick.
-const MP_UI_ID = "mercadopago";
 
 export default function CheckoutPage() {
   const navigate = useNavigate();
@@ -105,36 +96,11 @@ export default function CheckoutPage() {
   const [shippingOptions, setShippingOptions] = useState<any[]>([]);
   const [shippingOptionId, setShippingOptionId] = useState<string>("");
 
-  /**
-   * paymentOptions: lista de opciones de UI deduplicadas.
-   * Los 3 providers de MP se colapsan en uno solo con id = MP_UI_ID.
-   * El resto de providers (ej. pp_system_default) se muestran individualmente.
-   */
-  const [paymentOptions, setPaymentOptions] = useState<
-    { id: string; label: string; isMp: boolean }[]
-  >([]);
-
-  /** ID de UI seleccionado en el radio group ("mercadopago" | otro provider_id) */
-  const [selectedPaymentOption, setSelectedPaymentOption] = useState<string>("");
+  const [paymentProviders, setPaymentProviders] = useState<any[]>([]);
+  const [paymentProviderId, setPaymentProviderId] = useState<string>("");
 
   const [saving, setSaving] = useState(false);
-
-  /**
-   * mpSessionId: ID de la payment session creada con el primer provider de MP
-   * (pp_credit_mercadopago por defecto). Se usa como "sesión inicial"; si el
-   * usuario elige débito o efectivo en el Brick, el context creará la sesión
-   * correcta en el momento del submit.
-   */
   const [mpSessionId, setMpSessionId] = useState<string>("");
-
-  /**
-   * mpInitialProviderId: provider con el que se creó mpSessionId.
-   * El context lo usará para saber si necesita re-inicializar antes del submit.
-   */
-  const [mpInitialProviderId, setMpInitialProviderId] = useState<string>("");
-  /** paymentCollectionId guardado en onFinalize para pasarlo sin fetch en onSubmit */
-  const [mpPaymentCollectionId, setMpPaymentCollectionId] = useState<string>("");
-
   const [mpReady, setMpReady] = useState(false);
   const [processingMp, setProcessingMp] = useState(false);
 
@@ -143,7 +109,6 @@ export default function CheckoutPage() {
 
   const discountTotal = (cart as any)?.discount_total ?? 0;
 
-  // ── Cargar opciones de envío y pago al montar ─────────────────────────────
   useEffect(() => {
     if (!isReady) return;
 
@@ -158,24 +123,7 @@ export default function CheckoutPage() {
         }
 
         const prov = await getPaymentProviders();
-
-        // Deduplicar: todos los providers de MP → un solo item en la UI
-        const options: { id: string; label: string; isMp: boolean }[] = [];
-        let mpAdded = false;
-
-        for (const p of prov) {
-          if (isMercadoPagoProvider(p.id)) {
-            if (!mpAdded) {
-              options.push({ id: MP_UI_ID, label: "Mercado Pago", isMp: true });
-              mpAdded = true;
-            }
-            // Los demás providers de MP no se muestran como opciones separadas
-          } else {
-            options.push({ id: p.id, label: p.name || p.id, isMp: false });
-          }
-        }
-
-        setPaymentOptions(options);
+        setPaymentProviders(prov);
       } catch (e) {
         console.error("Checkout init error:", e);
       }
@@ -183,7 +131,6 @@ export default function CheckoutPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady]);
 
-  // ── Pre-rellenar campos desde el carrito ─────────────────────────────────
   useEffect(() => {
     const shipping = (cart as any)?.shipping_address;
     if (!shipping) return;
@@ -250,42 +197,27 @@ export default function CheckoutPage() {
     },
   };
 
-  const handlePaymentOptionChange = (id: string) => {
-    setSelectedPaymentOption(id);
+  const handlePaymentChange = (id: string) => {
+    setPaymentProviderId(id);
 
-    if (id !== MP_UI_ID) {
+    if (id !== "pp_mercadopago_mercadopago") {
       setMpReady(false);
       setMpSessionId("");
-      setMpInitialProviderId("");
-      setMpPaymentCollectionId("");
       mpSubmittingRef.current = false;
     }
   };
 
-  // ── Callback del Brick: el usuario llenó el formulario y presionó Pagar ──
   const onSubmit = async ({ formData }: any) => {
-    console.log("[MP] formData del Brick:", JSON.stringify(formData, null, 2));
     if (!mpSessionId) {
       throw new Error("No existe paymentSessionId para Mercado Pago");
     }
 
-    if (!cart?.id) {
-      throw new Error("No hay carrito activo");
-    }
-
-    // Guard síncrono — si este cartId ya está siendo procesado, ignorar.
-    // Set.has() + Set.add() es atómico en JS (single-threaded), imposible
-    // de bypassear aunque el Brick llame onSubmit varias veces seguidas.
-    if (_processingCarts.has(cart.id)) {
-      console.warn("[MP] onSubmit ignorado — cart ya en proceso:", cart.id);
-      return;
-    }
-    _processingCarts.add(cart.id);
-    setProcessingMp(true);
-
-    const cartId = cart.id; // capturar antes de limpiar
+    if (mpSubmittingRef.current) return;
 
     try {
+      mpSubmittingRef.current = true;
+      setProcessingMp(true);
+
       const payload: any = {
         transaction_amount: Number(formData.transaction_amount ?? cart?.total ?? 0),
         payment_method_id: formData.payment_method_id,
@@ -294,10 +226,10 @@ export default function CheckoutPage() {
         },
       };
 
-      // Pagos con tarjeta tienen token/issuer/installments
+      // Solo pagos con tarjeta tienen token/issuer/installments
       if (formData.token) {
-        payload.token        = formData.token;
-        payload.issuer_id    = formData.issuer_id ? Number(formData.issuer_id) : undefined;
+        payload.token = formData.token;
+        payload.issuer_id = formData.issuer_id;
         payload.installments = Number(formData.installments ?? 1);
       }
 
@@ -311,99 +243,39 @@ export default function CheckoutPage() {
         };
       }
 
-      const isTicketPayment = !formData.token; // efectivo no tiene token
+      const paymentResult = await submitMercadoPagoBrick(mpSessionId, payload);
 
-      // Usar el paymentCollectionId guardado en onFinalize — ya disponible
-      // en el estado de React sin necesidad de ningún fetch adicional.
-      // Esto es crítico para tarjetas: el token de MP es de un solo uso y
-      // se invalida rápidamente si hay latencia antes del complete.
-      const pcId = mpPaymentCollectionId || (cart as any)?.payment_collection?.id;
-      if (!pcId) throw new Error("No se encontró la payment collection del carrito");
+      const status = paymentResult?.status;
+      const ticketUrl =
+        paymentResult?.point_of_interaction?.transaction_data?.ticket_url ||
+        paymentResult?.point_of_interaction?.transaction_data?.external_resource_url ||
+        paymentResult?.transaction_details?.external_resource_url ||
+        null;
 
-      // Crear la sesión final con el mpPaymentBody real del Brick.
-      await submitMercadoPagoBrick(
-        cartId,
-        mpSessionId,
-        mpInitialProviderId,
-        payload,
-        pcId
-      );
-
-      if (isTicketPayment) {
-        // Para efectivo: llamar complete() aquí mismo.
-        // Con URL pública (ngrok/producción) MP puede recibir la notification_url
-        // y devuelve { type: "order" } con la orden creada.
-        // Si la URL no es pública devuelve payment_authorization_error (solo en local).
-        let ticketUrl: string | null = null;
-
-        const result = await complete();
-
-        console.log("[MP] complete efectivo — respuesta completa:", JSON.stringify(result, null, 2));
-
-        if (result?.type === "order") {
-          // Consultar el ticket URL via endpoint propio del backend
-          // que lee session.data.mpPaymentId y consulta la API de MP.
-          try {
-            // Usar cartId — el backend busca la sesión por cart_id que es
-            // más confiable que order_id en el módulo de pagos de Medusa v2
-            const ticketData = await getTicketUrl({ cartId });
-            ticketUrl = ticketData.ticketUrl;
-            console.log("[MP] ticketUrl desde backend:", ticketUrl);
-          } catch (e) {
-            console.warn("[MP] No se pudo obtener ticketUrl:", e);
-          }
-
-          clearLocalCart();
-          navigate("/checkout/pending", {
-            state: {
-              cartId,
-              paymentMethodId: formData.payment_method_id,
-              paymentPointId: formData.payment_point_id || formData.paymentPointId || null,
-              ticketUrl,
-              order: result.order,
-            },
-          });
-          return;
-        }
-
-        // Fallback: payment_authorization_error (URL local sin ngrok)
-        // Intentar obtener el ticket via cart_id
-        try {
-          const ticketData = await getTicketUrl({ cartId });
-          ticketUrl = ticketData.ticketUrl;
-          console.log("[MP] ticketUrl fallback:", ticketUrl);
-        } catch (e) {
-          console.warn("[MP] No se pudo obtener ticketUrl (fallback):", e);
-        }
-
+      // Pagos en efectivo suelen quedar pending
+      if (status === "pending") {
         clearLocalCart();
         navigate("/checkout/pending", {
           state: {
-            cartId,
-            paymentMethodId: formData.payment_method_id,
-            paymentPointId: formData.payment_point_id || formData.paymentPointId || null,
+            paymentResult,
             ticketUrl,
+            cartId: cart?.id,
           },
         });
         return;
       }
 
-      // Para tarjeta: redirigir a CheckoutReturnPage que llama complete()
-      // con reintentos y muestra el spinner de confirmación.
-      // NO llamar clearLocalCart() aquí — CheckoutReturnPage lo hace tras el éxito.
-      navigate(`/checkout/return?cart_id=${cartId}`);
+      toast.success("Pago enviado a Mercado Pago. Estamos confirmando...");
+      navigate(`/checkout/return?cart_id=${cart?.id}`);
     } catch (e: any) {
       console.error(e);
       toast.error(e?.message || "No se pudo procesar el pago con Mercado Pago");
-      // Solo resetear el ref en error para permitir reintento
-      // Solo liberar el guard en error para permitir reintento
-      if (cart?.id) _processingCarts.delete(cart.id);
+      mpSubmittingRef.current = false;
     } finally {
       setProcessingMp(false);
     }
   };
 
-  // ── Botón "Finalizar compra" ──────────────────────────────────────────────
   const onFinalize = async () => {
     if (!canCheckout) {
       toast.error("Tu carrito está vacío");
@@ -418,41 +290,35 @@ export default function CheckoutPage() {
 
       await saveContactAndAddress();
 
-      if (!shippingOptionId) throw new Error("Selecciona un método de envío");
+      if (!shippingOptionId) {
+        throw new Error("Selecciona un método de envío");
+      }
+
       await setShippingOption(shippingOptionId);
 
-      if (!selectedPaymentOption) throw new Error("Selecciona un método de pago");
+      if (!paymentProviderId) {
+        throw new Error("Selecciona un método de pago");
+      }
 
-      if (selectedPaymentOption === MP_UI_ID) {
-        // Pasar pcId desde el cart en memoria para evitar fetches extra en initPayment.
-        // Si el cart aún no tiene payment_collection, initPayment la creará internamente.
-        const existingPcId = (cart as any)?.payment_collection?.id as string | undefined;
+      const { paymentSessionId } = await initPayment(paymentProviderId);
 
-        const { paymentSessionId, paymentCollectionId } = await initPayment(
-          MP_PROVIDER_CREDIT,
-          existingPcId
-        );
-
+      if (paymentProviderId === "pp_mercadopago_mercadopago") {
         if (!paymentSessionId) {
           throw new Error("No se pudo crear la payment session de Mercado Pago");
         }
 
         setMpSessionId(paymentSessionId);
-        setMpInitialProviderId(MP_PROVIDER_CREDIT);
-        setMpPaymentCollectionId(paymentCollectionId ?? existingPcId ?? "");
         setMpReady(true);
         toast.success("Formulario de Mercado Pago listo");
         return;
       }
 
-      // Otro provider (ej. pp_system_default / manual)
-      const { paymentSessionId } = await initPayment(selectedPaymentOption);
-      console.log("Payment session:", paymentSessionId);
-
       const result = await complete();
       clearLocalCart();
       toast.success("Orden creada correctamente");
-      navigate("/checkout/return", { state: { completedResult: result } });
+      navigate("/checkout/return", {
+        state: { completedResult: result },
+      });
     } catch (e: any) {
       toast.error(e?.message || "No se pudo finalizar la compra");
       console.error(e);
@@ -483,7 +349,6 @@ export default function CheckoutPage() {
 
         <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
           <section className="lg:col-span-2 space-y-6">
-            {/* ── Información de contacto ── */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Información de contacto</CardTitle>
@@ -517,7 +382,6 @@ export default function CheckoutPage() {
               </CardContent>
             </Card>
 
-            {/* ── Dirección de envío ── */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Dirección de envío</CardTitle>
@@ -580,7 +444,6 @@ export default function CheckoutPage() {
               </CardContent>
             </Card>
 
-            {/* ── Opciones de envío ── */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Opciones de envío</CardTitle>
@@ -616,100 +479,82 @@ export default function CheckoutPage() {
               </CardContent>
             </Card>
 
-            {/* ── Opciones de pago ── */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">Opciones de pago</CardTitle>
               </CardHeader>
               <CardContent>
-                {paymentOptions.length === 0 ? (
+                {paymentProviders.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No hay métodos de pago disponibles.
                   </p>
                 ) : (
-                  <RadioGroup
-                    value={selectedPaymentOption}
-                    onValueChange={handlePaymentOptionChange}
-                    className="space-y-3"
-                  >
-                    {paymentOptions.map((opt) => (
-                      <div key={opt.id} className="space-y-4">
-                        {/* Radio button de la opción */}
-                        <div
-                          className={`flex items-center justify-between rounded-lg border p-4 transition-all ${
-                            selectedPaymentOption === opt.id
-                              ? "border-primary bg-primary/5"
-                              : "border-border"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 w-full cursor-pointer">
-                            <RadioGroupItem value={opt.id} id={`pay-${opt.id}`} />
-                            <Label
-                              htmlFor={`pay-${opt.id}`}
-                              className="flex items-center justify-between w-full font-medium cursor-pointer"
-                            >
-                              <span>{opt.label}</span>
+                  <RadioGroup value={paymentProviderId} onValueChange={handlePaymentChange} className="space-y-3">
+                    {paymentProviders.map((p: any) => {
+                      const isMP = p.id === "pp_mercadopago_mercadopago";
 
-                              {opt.isMp && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] text-muted-foreground hidden md:inline">
-                                    Tarjeta de crédito, débito o efectivo
-                                  </span>
-                                  <img
-                                    src="assets/mp_logo.webp"
-                                    alt="Mercado Pago"
-                                    className="h-9 w-auto rounded-full"
+                      return (
+                        <div key={p.id} className="space-y-4">
+                          <div
+                            className={`flex items-center justify-between rounded-lg border p-4 transition-all ${
+                              paymentProviderId === p.id ? "border-primary bg-primary/5" : "border-border"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 w-full cursor-pointer">
+                              <RadioGroupItem value={p.id} id={`pay-${p.id}`} />
+                              <Label
+                                htmlFor={`pay-${p.id}`}
+                                className="flex items-center justify-between w-full font-medium cursor-pointer"
+                              >
+                                <span>{isMP ? "Mercado Pago" : (p.name || p.id)}</span>
+
+                                {isMP && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-muted-foreground hidden md:inline">
+                                      Paga con tarjeta o efectivo
+                                    </span>
+                                    <img
+                                      src="assets/mp_logo.webp"
+                                      alt="Mercado Pago"
+                                      className="h-9 w-auto rounded-full"
+                                    />
+                                  </div>
+                                )}
+                              </Label>
+                            </div>
+                          </div>
+
+                          {isMP && paymentProviderId === "pp_mercadopago_mercadopago" && (
+                            <div className="mt-4 border rounded-lg min-h-[100px]">
+                              {!mpReady ? (
+                                <div className="flex flex-col items-center p-8 bg-muted/50 rounded-lg border-dashed border-2">
+                                  <p className="mt-2 text-xs text-muted-foreground uppercase tracking-widest">
+                                    Primero haz clic en “Finalizar compra” para preparar el formulario seguro
+                                  </p>
+                                </div>
+                              ) : !mpSessionId ? (
+                                <div className="flex flex-col items-center p-8 bg-muted/50 rounded-lg border-dashed border-2">
+                                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                                  <p className="mt-2 text-xs text-muted-foreground uppercase tracking-widest">
+                                    Estableciendo conexión segura...
+                                  </p>
+                                </div>
+                              ) : (
+                                <div className="animate-in fade-in zoom-in-95 duration-300">
+                                  <Payment
+                                    initialization={{
+                                      amount: Number(cart?.total ?? 0),
+                                    }}
+                                    customization={customization}
+                                    onSubmit={onSubmit}
                                   />
                                 </div>
                               )}
-                            </Label>
-                          </div>
+                            </div>
+                          )}
                         </div>
-
-                        {/* Brick de Mercado Pago (solo cuando está seleccionado y listo) */}
-                        {opt.isMp && selectedPaymentOption === MP_UI_ID && (
-                          <div className="mt-4 border rounded-lg min-h-[100px]">
-                            {!mpReady ? (
-                              <div className="flex flex-col items-center p-8 bg-muted/50 rounded-lg border-dashed border-2">
-                                <p className="mt-2 text-xs text-muted-foreground uppercase tracking-widest">
-                                  Primero haz clic en "Finalizar compra" para preparar el formulario seguro
-                                </p>
-                              </div>
-                            ) : !mpSessionId ? (
-                              <div className="flex flex-col items-center p-8 bg-muted/50 rounded-lg border-dashed border-2">
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-                                <p className="mt-2 text-xs text-muted-foreground uppercase tracking-widest">
-                                  Estableciendo conexión segura...
-                                </p>
-                              </div>
-                            ) : (
-                              <div className="animate-in fade-in zoom-in-95 duration-300 relative">
-                                {/* Overlay de carga — cubre el Brick mientras se procesa
-                                    el pago para evitar que el usuario vea el reset visual */}
-                                {processingMp && (
-                                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-lg bg-background/90 backdrop-blur-sm">
-                                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                    <p className="text-sm font-medium text-foreground">
-                                      Procesando tu pago...
-                                    </p>
-                                    <p className="text-xs text-muted-foreground">
-                                      Por favor no cierres esta ventana
-                                    </p>
-                                  </div>
-                                )}
-                                <Payment
-                                  initialization={{
-                                    amount: Number(cart?.total ?? 0),
-                                  }}
-                                  customization={customization}
-                                  onSubmit={onSubmit}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </RadioGroup>
                 )}
               </CardContent>
@@ -720,26 +565,12 @@ export default function CheckoutPage() {
                 size="lg"
                 onClick={onFinalize}
                 disabled={!canCheckout || saving || processingMp}
-                className="min-w-[180px]"
               >
-                {saving ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Preparando pago...
-                  </span>
-                ) : processingMp ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Procesando pago...
-                  </span>
-                ) : (
-                  "Finalizar compra"
-                )}
+                {saving ? "Preparando pago..." : processingMp ? "Procesando pago..." : "Finalizar compra"}
               </Button>
             </div>
           </section>
 
-          {/* ── Resumen del pedido ── */}
           <aside className="space-y-6">
             <Card>
               <CardHeader>
@@ -764,9 +595,7 @@ export default function CheckoutPage() {
                         </div>
 
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-foreground line-clamp-2">
-                            {item.title}
-                          </p>
+                          <p className="text-sm font-semibold text-foreground line-clamp-2">{item.title}</p>
                         </div>
 
                         <div className="text-sm font-medium">
@@ -795,9 +624,7 @@ export default function CheckoutPage() {
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Envío</span>
                     <span className="font-medium">
-                      {(cart?.shipping_total ?? 0) === 0
-                        ? "—"
-                        : formatPrice(cart?.shipping_total ?? 0, currency)}
+                      {(cart?.shipping_total ?? 0) === 0 ? "—" : formatPrice(cart?.shipping_total ?? 0, currency)}
                     </span>
                   </div>
 
