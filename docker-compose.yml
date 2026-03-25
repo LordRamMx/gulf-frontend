@@ -1,38 +1,36 @@
-version: "3.9"
-
-services:
-  delta:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        VITE_MEDUSA_BACKEND_URL: ${VITE_MEDUSA_BACKEND_URL}
-        VITE_MEDUSA_PUBLISHABLE_KEY: ${VITE_MEDUSA_PUBLISHABLE_KEY}
-        VITE_MEDUSA_REGION_ID: ${VITE_MEDUSA_REGION_ID}
-
-    image: delta:git
-    restart: unless-stopped
-    networks:
-      - proxy
-
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=proxy
-
-      # HTTPS
-      - traefik.http.routers.delta.rule=Host(`delta.yupiyes.com`)
-      - traefik.http.routers.delta.entrypoints=websecure
-      - traefik.http.routers.delta.tls=true
-      - traefik.http.routers.delta.tls.certresolver=le
-      - traefik.http.services.delta.loadbalancer.server.port=80
-
-      # HTTP -> HTTPS
-      - traefik.http.routers.delta-http.rule=Host(`delta.yupiyes.com`)
-      - traefik.http.routers.delta-http.entrypoints=web
-      - traefik.http.routers.delta-http.middlewares=delta-redirect
-      - traefik.http.middlewares.delta-redirect.redirectscheme.scheme=https
-      - traefik.http.middlewares.delta-redirect.redirectscheme.permanent=true
+###############################################################################
+# gulf-frontend — Medusa v2 Storefront
+# Deployed via Portainer "Stack from Git repo"
+# Image built by GitHub Actions and pushed to GHCR
+###############################################################################
 
 networks:
   proxy:
     external: true
+
+services:
+  gulf:
+    image: ghcr.io/lordrammx/gulf-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.gulf.rule=Host(`gulf.yupiyes.com`)"
+      - "traefik.http.routers.gulf.entrypoints=websecure"
+      - "traefik.http.routers.gulf.tls=true"
+      - "traefik.http.routers.gulf.tls.certresolver=le"
+      - "traefik.http.services.gulf.loadbalancer.server.port=80"
+      # HTTP → HTTPS redirect
+      - "traefik.http.routers.gulf-http.rule=Host(`gulf.yupiyes.com`)"
+      - "traefik.http.routers.gulf-http.entrypoints=web"
+      - "traefik.http.routers.gulf-http.middlewares=gulf-redirect"
+      - "traefik.http.middlewares.gulf-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.gulf-redirect.redirectscheme.permanent=true"
